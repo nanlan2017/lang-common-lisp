@@ -1,0 +1,8 @@
+(defclass speaker () ())
+
+;; Speaker#speak(string)
+(defmethod speak ((s speaker) string)
+  (format t "~A" string))
+
+					; `````````````````
+(speak (make-instance 'speaker) "I am hungry")

@@ -1,0 +1,83 @@
+;;  当你写下 'xxx 的时候， 这个 xxx 就已经实例化为一个 Symbol instance （不过还未绑定值、函数）
+;;  Symbol对象的字面写法都是 'xxx ，
+;;  要分清楚：
+;;    1.  求值策略 （函数调用时如何求值、quote、#' 、宏调用时如何求值）
+;;    2.  symbol, 全局变量名(特殊/动态)， 函数名  的绑定关系
+
+;; function是特殊操作符，有特别的求值策略。所有把函数名直接写在后面没事！
+
+
+
+;;  这3者等价！  #<FUNCTION +>
+;;  返回的类型都是 FUNCTION
+(function +)
+#'+
+(symbol-function '+)
+
+
+;; 而使用一个Function对象时，要使用 funcall/ apply
+
+
+
+(defun -eval (expr env)
+  (cond
+    ((eql 'quote (car expr)) (cdr expr)) ;;   eval 'x  ===>  x
+    ;; 其他特殊操作符
+    ;; 函数调用
+    (t (apply (symbol-function (car expr)) ; 取出第一个元素：Function对象
+	      ;; 实参要首先求值各参数为值列表
+	      (mapcar #'(lambda (elem) (eval elem env)) (cdr expr))))))
+
+;; 你在编辑器里写  (+  1 2)
+;; 经过reader: 将其读为 CONS<Symbol> --- ('+  '1 '2)
+;; 经过eval ，得到一个某类型的结果值
+					;  apply (symbol-function '+) '(1 2)
+;; print该类型的值
+;;*************************************************************************************
+
+;;  跨越代码与列表（数据）的界限
+
+;; 1. eval
+(eval '(+ 1 2))
+(eval (list '+ '1 '2))
+(eval (list '+ '(* 5 6) '1))		; 31
+;; '(a b c)  === 'a 'b 'c
+
+;; 2. coerce : 强制转换接下来的Cons-symbols 为 指定类型
+(coerce '(lambda (x) (1+ x)) 'function)	; #<FUNCTION (LAMBDA (X)) {1001F780BB}> （解释器interpreter)
+
+;; 3. compile
+(compile 'add2 '(lambda (x) (+ x 2)))	; #<Compiled-Function add2>
+;;*************************************************************************************
+(defmacro nil! (x)
+  (list 'setf x nil))
+
+(nil! x)
+
+
+;;  
+;; 相当于产生了这样的一个 nil! 函数
+(lambda (expr)
+  (apply #'(lambda (x) (list 'setf x nil)) (cdr expr)))
+
+					; cdr '(nil! x) ===>  'x
+					; (lambda (x) (list 'setf x nil)) --> 'x  ====>  '(setf x nil)
+;;**********************************************************************************
+(let ((a 1)
+      (b 2))
+  `(a is ,a and b is ,b))		; '(A is 1 and b is 2)
+
+(let ((lst '(a b c)))
+  `(LIST is lst)
+  `(LIST is ,lst)
+  ;; `(LIST is ,@lst)
+  
+  )
+
+(defmacro -while (test &rest body)
+  `(do ()
+       ((not ,test))
+     body))
+(-while (+ 1 2) fuck)
+
+(pprint (macroexpand-1 '(-while (+ 1 2) fuck)))

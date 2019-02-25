@@ -1,0 +1,136 @@
+;;;------------ 基础tool： 读/写一个unsigned,16-bits的整数
+(defun read-u2 (in)
+  (let ((u2 0))
+    (setf (LDB (BYTE 8 8) u2) (READ-BYTE in))
+    (setf (LDB (BYTE 8 0) u2) (READ-BYTE in))
+    u2))
+;; 把一个数字转换为16位二进制写入流
+(defun write-u2 (out value)
+  (WRITE-BYTE (LDB (BYTE 8 8) value) out)
+  (WRITE-BYTE (LDB (BYTE 8 0) value) out))
+
+;;;------------ string
+(defconstant +null+ (code-char 0))	; "空字符\0"
+
+(defun read-null-terminated-ascii (in)
+  (with-output-to-string (s)
+    (loop for char = (CODE-CHAR (READ-BYTE in))
+       until (CHAR= char +null+) do (WRITE-CHAR char s))))
+
+(defun write-null-terminated-ascii (str out)
+  (loop for char across str
+     do (WRITE-BYTE (CHAR-CODE char) out))
+  ;; 末尾写一个空字符
+  (WRITE-BYTE (CHAR-CODE +null+) out))
+
+
+;;;==============================================================
+;;;   ▇▇▇▇▇▇典型的样板代码 （poiler-plate code)
+;; defclass id3-tag
+;; + defun read-id3-tag (from in)
+;; + defun write-id3-tag (to out)
+
+;; ▇▇▇▇▇▇而以上3者所基于的信息完全只是 id3-tag 的格式描述
+;; --->  so,
+(define-binary-class id3-tag
+    ((file-identifier (iso-8859-1-string :length 3))
+     (major-version   u1)
+     (revision        u1)
+     (flags           u1) 		; 1-byte unsigned
+     (size            id3-tag-size)
+     (frames          (id3-frames :tag-size size))))
+;; ▇▇▇▇▇▇该 define-binary-class 宏将此格式描述代码自动展开成 id3-tag类定义+ read/write方法
+;;    ||   
+;;    ||
+;;    ||
+;;    ||  （固定了一个 S-expression的格式后、就相当于拿到了一个 data-structure）
+;;    ||        ---->   解析、构建“展开的s-expression" 很简单。e 
+;;   \||/   ----->  一个s-exp的基本元素(symbol)为： macro, #'function |   value（实例）, 'symbol (keyword symbol) ---如 类型名
+;;    \/
+;; [ 展开得到的defclass 定义，完美！]
+;; (DEFCLASS ID3-TAG
+;;           ((FILE-IDENTIFIER :INITARG :FILE-IDENTIFIER :ACCESSOR FILE-IDENTIFIER)
+;;            (MAJOR-VERSION :INITARG :MAJOR-VERSION :ACCESSOR MAJOR-VERSION)
+;;            (REVISION :INITARG :REVISION :ACCESSOR REVISION)
+;;            (FLAGS :INITARG :FLAGS :ACCESSOR FLAGS)
+;;            (SIZE :INITARG :SIZE :ACCESSOR SIZE)
+;;            (FRAMES :INITARG :FRAMES :ACCESSOR FRAMES)))
+;;    +   
+;;    +
+;; (defun read-id3-tag (in)
+;;   (let ((flag (make-instance 'id3-tag)))
+;;     (with-slots (file-identifier major-version revision flags size frames) tag
+;;       (setf file-identifier (read-iso-8859-1-string in :length 3))
+;;       (setf major-version (read-u1 in))
+;;       ;; ........
+;;       ;; .......
+;;       ;; (v1 s1) ====>  (setf v1 (read-s1 in))
+;;     tag)))
+	    
+;;;============================================================
+;; ▇▇▇▇▇▇▇▇▇▇ 首先你得非常熟练，由一个S-expression(也是data) 到 另一个S-expression(code is data)的转换 （通过defun / macro
+
+;; (revision nil) ----->   (revision :initarg :revision :accessor revision)
+;;  1. 将一个symobl 转换为 一个keyword symbol
+(defun as-keyword (sym)
+  (intern (string sym) :keyword))
+
+(defun slot->defclass-slot (spec)
+  (let ((name (first spec)))
+    `(,name :initarg ,(as-keyword name) :accessor ,name))) ; ▇▇▇▇▇▇▇ 其中要求值表现为值属性的，都要加‘ , '进行求值！
+     
+
+					; `````````````````````` test (
+					;
+(slot->defclass-slot '(revision u1))	;==> (REVISION :INITARG :REVISION :ACCESSOR REVISION)
+(slot->read-value '(revision u1) 'in)	;==> (SETF REVISION (READ-VALUE '(U1) IN))
+
+					;
+					; ,,,,,,,,,,,,,,,,,,,,,,,,,
+(defmacro define-binary-class (class-name specs)
+  ;;  specs  ===>   ((v1 s1) (v2 s2) ...)
+  ;;  宏展开里使用的 “局部变量”的符号名需使用gensym生成，以防
+  (with-gensyms (typevar objectvar streamvar)
+    `(progn
+        ;; defclass : 据此定义一个类
+        (defclass ,class-name
+	    ,(mapcar #'slot->defclass-slot specs))
+	
+	;; defmethod read-value ((typevar (eql class-name)) ：据此定义一个方法 read-T (其实是特化read-value针对T类型）
+        (defmethod ,read-value ((,typevar (eql ,'class-name)) ,streamvar &key)
+	  (let ((objectvar (make-instance ',class-name)))
+	    (with-slots ,(mapcar #'first slots) ,objectvar
+	      ,@(mapcar #'(lambda (x) (slot->read-value x streamvar)) slots))
+	    ,objectvar))
+
+	;; defmethod write-value
+	(defmethod ,write-value ((,typevar (eql ,'class-name)) ,streamvar ,objectvar &key)
+	  (with-slots ,(mapcar #'first slots) ,objectvar
+	    ,@(mapcar #'(lambda (x) (slot->write-value x ,streamvar)) slots))))))
+
+;;;============================================================
+;; 广义函数：从流中读取一个指定类型的值
+(defgeneric read-value (type stream &key)
+  (:documentation "Read a value of given type from the given stream"))
+
+;; u1 类型特化
+(defmethod read-value ((type (eql 'u1)) in-stream &key)
+  ;; 特化  read-u1 (in)
+  )
+
+;;  (identifier   (iso-string :length 3))
+;;  ====>  (setf identifier (read-value 'iso-string in :length 3))
+(defun slot->read-value (spec stream)
+  (DESTRUCTURING-BIND (name type &rest args) (normalize-slot-spec spec)
+    `(setf ,name (read-value ',type ,stream ,@args))))
+;; 其中，normalize-slot-spec 将 (v1 s1) 转为 (v1 (s1)) , 以便用 `destructing-bind 来模式匹配
+(defun normalize-slot-spec (spec)
+  (list (first spec) (mklist (second spec))))
+(defun mklist (x)
+  (if (listp x) x (list x)))
+  
+
+
+
+
+
